@@ -1,0 +1,41 @@
+# 빌드 출력
+bin/
+obj/
+*.dll
+*.pdb
+*.cache
+
+# 릴리즈 패키지
+release/
+release-package/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+
+# 로그 및 임시 파일
+*.log
+*.tmp
+*.temp
+
+# 암호화 파일
+*.enc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 다른 프로젝트
+분할/
+
+# Node.js (이전 버전)
+node_modules/
+dist/
+
+# 임시 ZIP 파일
+*.zip
+
+# 배치 파일 출력
+*.txt
