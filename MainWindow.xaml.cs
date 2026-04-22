@@ -97,14 +97,9 @@ namespace SecureMemo
 
         private void CheckApiKey()
         {
-            var apiKey = _storage.LoadApiKey();
-            _hasApiKey = !string.IsNullOrEmpty(apiKey);
-            
-            if (_hasApiKey)
-            {
-                _gemini.SetApiKey(apiKey!);
-            }
-
+            var serverUrl = _storage.LoadServerUrl() ?? "http://localhost:11434";
+            _hasApiKey = true; // 로컬 모델이므로 항상 활성화
+            _gemini.SetServerUrl(serverUrl);
             UpdateAiButtonsVisibility();
         }
 
@@ -401,7 +396,7 @@ namespace SecureMemo
                 MainContent.Visibility = Visibility.Collapsed;
             }
 
-            if (settingsWindow.ApiKeyChanged)
+            if (settingsWindow.ServerUrlChanged)
             {
                 CheckApiKey();
             }

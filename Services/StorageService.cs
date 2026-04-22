@@ -159,42 +159,32 @@ namespace SecureMemo.Services
             }
         }
 
-        public void SaveApiKey(string apiKey)
+        public void SaveServerUrl(string serverUrl)
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var keyPath = Path.Combine(appData, "SecureMemo", "api.enc");
-            
-            // API 키는 기본 암호화 사용
-            var tempKey = _encryption.GetKey();
-            _encryption.SetMasterKey("SecureMemoDefaultKey");
-            var encrypted = _encryption.Encrypt(apiKey);
-            _encryption.RestoreKey(tempKey);
-            
-            File.WriteAllText(keyPath, encrypted);
+            var urlPath = Path.Combine(appData, "SecureMemo", "server.url");
+            Directory.CreateDirectory(Path.GetDirectoryName(urlPath)!);
+            File.WriteAllText(urlPath, serverUrl);
         }
 
-        public string? LoadApiKey()
+        public string? LoadServerUrl()
         {
             try
             {
                 var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                var keyPath = Path.Combine(appData, "SecureMemo", "api.enc");
-                if (!File.Exists(keyPath)) return null;
-                
-                var encrypted = File.ReadAllText(keyPath);
-                
-                var tempKey = _encryption.GetKey();
-                _encryption.SetMasterKey("SecureMemoDefaultKey");
-                var decrypted = _encryption.Decrypt(encrypted);
-                _encryption.RestoreKey(tempKey);
-                
-                return decrypted;
+                var urlPath = Path.Combine(appData, "SecureMemo", "server.url");
+                if (!File.Exists(urlPath)) return null;
+                return File.ReadAllText(urlPath).Trim();
             }
             catch
             {
                 return null;
             }
         }
+
+        // 하위 호환성 유지
+        public void SaveApiKey(string apiKey) => SaveServerUrl(apiKey);
+        public string? LoadApiKey() => LoadServerUrl();
 
         public void SavePasswordHash(string hash)
         {

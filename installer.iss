@@ -1,5 +1,5 @@
 ﻿#define MyAppName "SecureMemo"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.1"
 #define MyAppPublisher "Your Name"
 #define MyAppURL "https://github.com/grasion/SecureMemo"
 #define MyAppExeName "SecureMemo.exe"

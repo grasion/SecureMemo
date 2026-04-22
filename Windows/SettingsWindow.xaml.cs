@@ -11,12 +11,12 @@ namespace SecureMemo.Windows
         private readonly EncryptionService _encryption;
         private readonly GeminiService _gemini;
         private readonly UpdateService _update;
+        private readonly OllamaSetupService _ollamaSetup;
         private bool _passwordVisible = false;
-        private bool _apiKeyVisible = false;
         private string? _updateFilePath;
 
         public bool PasswordEnabled { get; private set; }
-        public bool ApiKeyChanged { get; private set; }
+        public bool ServerUrlChanged { get; private set; }
 
         public SettingsWindow(StorageService storage, EncryptionService encryption, GeminiService gemini)
         {
@@ -25,7 +25,9 @@ namespace SecureMemo.Windows
             _encryption = encryption;
             _gemini = gemini;
             _update = new UpdateService();
+            _ollamaSetup = new OllamaSetupService();
             LoadSettings();
+            CheckOllamaStatus();
         }
 
         private void LoadSettings()
@@ -37,14 +39,6 @@ namespace SecureMemo.Windows
             var hasPassword = _storage.LoadPasswordHash() != null;
             UsePasswordCheckBox.IsChecked = hasPassword;
             PasswordPanel.Visibility = hasPassword ? Visibility.Visible : Visibility.Collapsed;
-
-            // API 키 로드
-            var apiKey = _storage.LoadApiKey();
-            if (!string.IsNullOrEmpty(apiKey))
-            {
-                ApiKeyPasswordBox.Password = apiKey;
-                ApiKeyTextBox.Text = apiKey;
-            }
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -140,72 +134,110 @@ namespace SecureMemo.Windows
             MessageBox.Show("비밀번호가 설정되었습니다", "완료", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        private void ToggleApiKeyVisibility_Click(object sender, RoutedEventArgs e)
+        private async void CheckOllamaStatus()
         {
-            _apiKeyVisible = !_apiKeyVisible;
-            
-            if (_apiKeyVisible)
+            var installed = _ollamaSetup.IsOllamaInstalled();
+            var running = installed && await _ollamaSetup.IsOllamaRunningAsync();
+            var hasModel = running && await _ollamaSetup.IsModelInstalledAsync();
+
+            if (hasModel)
             {
-                ApiKeyTextBox.Text = ApiKeyPasswordBox.Password;
-                ApiKeyPasswordBox.Visibility = Visibility.Collapsed;
-                ApiKeyTextBox.Visibility = Visibility.Visible;
+                SetupStatusText.Text = "✅ Ollama 설치됨 · 서버 실행 중 · gemma4-e2b 모델 준비 완료";
+                SetupStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
+                AutoSetupButton.Content = "✅ AI 설정 완료";
+                AutoSetupButton.Background = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x2a, 0x2a, 0x2a));
+                TestApiButton.Visibility = Visibility.Visible;
+            }
+            else if (running)
+            {
+                SetupStatusText.Text = "⚠ Ollama 실행 중이지만 gemma4-e2b 모델이 없습니다";
+                SetupStatusText.Foreground = System.Windows.Media.Brushes.Orange;
+            }
+            else if (installed)
+            {
+                SetupStatusText.Text = "⚠ Ollama 설치됨, 서버가 실행되지 않고 있습니다";
+                SetupStatusText.Foreground = System.Windows.Media.Brushes.Orange;
             }
             else
             {
-                ApiKeyPasswordBox.Password = ApiKeyTextBox.Text;
-                ApiKeyTextBox.Visibility = Visibility.Collapsed;
-                ApiKeyPasswordBox.Visibility = Visibility.Visible;
+                SetupStatusText.Text = "Ollama가 설치되어 있지 않습니다. 위 버튼을 눌러 자동 설정하세요.";
+                SetupStatusText.Foreground = System.Windows.Media.Brushes.Gray;
             }
         }
 
-        private void SaveApiKey_Click(object sender, RoutedEventArgs e)
+        private async void AutoSetup_Click(object sender, RoutedEventArgs e)
         {
-            var apiKey = _apiKeyVisible ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
-            
-            if (string.IsNullOrWhiteSpace(apiKey))
+            AutoSetupButton.IsEnabled = false;
+            AutoSetupButton.Content = "설정 진행 중...";
+            SetupProgressBar.Visibility = Visibility.Visible;
+            SetupProgressBar.Value = 0;
+
+            _ollamaSetup.StatusChanged += status =>
             {
-                MessageBox.Show("API 키를 입력하세요", "오류", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                Dispatcher.Invoke(() => SetupStatusText.Text = status);
+            };
+
+            _ollamaSetup.ProgressChanged += percent =>
+            {
+                Dispatcher.Invoke(() => SetupProgressBar.Value = percent);
+            };
+
+            try
+            {
+                var success = await _ollamaSetup.AutoSetupAsync();
+
+                if (success)
+                {
+                    SetupStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
+                    AutoSetupButton.Content = "✅ AI 설정 완료";
+                    TestApiButton.Visibility = Visibility.Visible;
+
+                    // 서버 URL 자동 저장 (기본 localhost)
+                    var serverUrl = "http://localhost:11434";
+                    _storage.SaveServerUrl(serverUrl);
+                    _gemini.SetServerUrl(serverUrl);
+                    ServerUrlChanged = true;
+                }
+                else
+                {
+                    SetupStatusText.Foreground = System.Windows.Media.Brushes.Red;
+                    AutoSetupButton.Content = "🚀 원클릭 AI 설정";
+                    AutoSetupButton.IsEnabled = true;
+                }
             }
-
-            _storage.SaveApiKey(apiKey);
-            _gemini.SetApiKey(apiKey);
-            ApiKeyChanged = true;
-
-            MessageBox.Show("API 키가 저장되었습니다", "완료", MessageBoxButton.OK, MessageBoxImage.Information);
+            catch (Exception ex)
+            {
+                SetupStatusText.Text = $"설정 실패: {ex.Message}";
+                SetupStatusText.Foreground = System.Windows.Media.Brushes.Red;
+                AutoSetupButton.Content = "🚀 원클릭 AI 설정";
+                AutoSetupButton.IsEnabled = true;
+            }
+            finally
+            {
+                SetupProgressBar.Visibility = Visibility.Collapsed;
+            }
         }
 
         private async void TestApi_Click(object sender, RoutedEventArgs e)
         {
-            var apiKey = _apiKeyVisible ? ApiKeyTextBox.Text : ApiKeyPasswordBox.Password;
-            
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                ApiTestResult.Text = "❌ API 키를 입력하세요";
-                ApiTestResult.Foreground = System.Windows.Media.Brushes.Red;
-                return;
-            }
+            var serverUrl = _storage.LoadServerUrl() ?? "http://localhost:11434";
 
             try
             {
                 TestApiButton.IsEnabled = false;
                 TestApiButton.Content = "테스트 중...";
-                ApiTestResult.Text = "테스트 중...";
+                ApiTestResult.Visibility = Visibility.Visible;
+                ApiTestResult.Text = "연결 테스트 중...";
                 ApiTestResult.Foreground = System.Windows.Media.Brushes.Gray;
 
-                _gemini.SetApiKey(apiKey);
-                var result = await _gemini.SummarizeText("테스트");
+                _gemini.SetServerUrl(serverUrl);
+                var (success, message) = await _gemini.TestConnectionAsync();
 
-                if (!string.IsNullOrEmpty(result) && result != "요약 실패")
-                {
-                    ApiTestResult.Text = "✅ API 연결 성공!";
-                    ApiTestResult.Foreground = System.Windows.Media.Brushes.LightGreen;
-                }
-                else
-                {
-                    ApiTestResult.Text = "❌ API 연결 실패";
-                    ApiTestResult.Foreground = System.Windows.Media.Brushes.Red;
-                }
+                ApiTestResult.Text = message;
+                ApiTestResult.Foreground = success 
+                    ? System.Windows.Media.Brushes.LightGreen 
+                    : System.Windows.Media.Brushes.Red;
             }
             catch (Exception ex)
             {
@@ -215,7 +247,7 @@ namespace SecureMemo.Windows
             finally
             {
                 TestApiButton.IsEnabled = true;
-                TestApiButton.Content = "API 테스트";
+                TestApiButton.Content = "연결 테스트";
             }
         }
 
