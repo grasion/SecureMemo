@@ -35,12 +35,13 @@ namespace SecureMemo.Services
                 var latestVersion = tagName.TrimStart('v');
                 var releaseNotes = release["body"]?.ToString() ?? "업데이트 내용이 없습니다.";
                 
-                // assets에서 .exe 파일 찾기
+                // assets에서 다운로드 파일 찾기 (.exe 우선, 없으면 .zip)
                 var assets = release["assets"] as JArray;
                 string downloadUrl = "";
                 
                 if (assets != null)
                 {
+                    // 1순위: .exe 설치 파일
                     foreach (var asset in assets)
                     {
                         var name = asset["name"]?.ToString() ?? "";
@@ -48,6 +49,20 @@ namespace SecureMemo.Services
                         {
                             downloadUrl = asset["browser_download_url"]?.ToString() ?? "";
                             break;
+                        }
+                    }
+
+                    // 2순위: .zip 포터블 파일
+                    if (string.IsNullOrEmpty(downloadUrl))
+                    {
+                        foreach (var asset in assets)
+                        {
+                            var name = asset["name"]?.ToString() ?? "";
+                            if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                            {
+                                downloadUrl = asset["browser_download_url"]?.ToString() ?? "";
+                                break;
+                            }
                         }
                     }
                 }
