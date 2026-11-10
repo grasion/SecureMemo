@@ -1,44 +1,32 @@
 using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
+using Microsoft.Win32;
+using SecureMemo.Models;
 using SecureMemo.Services;
 
 namespace SecureMemo.Windows
 {
     public partial class SettingsWindow : Window
     {
-        private readonly StorageService _storage;
-        private readonly EncryptionService _encryption;
-        private readonly GeminiService _gemini;
+        private readonly Func<IReadOnlyList<Memo>> _getMemos;
+        private readonly ExportService _export = new();
         private readonly UpdateService _update;
-        private readonly OllamaSetupService _ollamaSetup;
-        private bool _passwordVisible = false;
         private string? _updateFilePath;
 
-        public bool PasswordEnabled { get; private set; }
-        public bool ServerUrlChanged { get; private set; }
-
-        public SettingsWindow(StorageService storage, EncryptionService encryption, GeminiService gemini)
+        public SettingsWindow(Func<IReadOnlyList<Memo>> getMemos)
         {
             InitializeComponent();
-            _storage = storage;
-            _encryption = encryption;
-            _gemini = gemini;
+            _getMemos = getMemos;
             _update = new UpdateService();
-            _ollamaSetup = new OllamaSetupService();
-            LoadSettings();
-            CheckOllamaStatus();
-        }
-
-        private void LoadSettings()
-        {
-            // 버전 표시
             VersionText.Text = $"현재 버전: v{_update.CurrentVersion}";
 
-            // 비밀번호 설정 확인
-            var hasPassword = _storage.LoadPasswordHash() != null;
-            UsePasswordCheckBox.IsChecked = hasPassword;
-            PasswordPanel.Visibility = hasPassword ? Visibility.Visible : Visibility.Collapsed;
+            var count = _getMemos().Count;
+            ExportDescText.Text = $"현재 메모 공간의 메모 {count}개를 하나의 Word 문서로 저장합니다. (메모마다 새 페이지)";
+            ExportAllButton.IsEnabled = count > 0;
         }
 
         private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
@@ -51,203 +39,29 @@ namespace SecureMemo.Windows
             Close();
         }
 
-        private void UsePasswordCheckBox_Checked(object sender, RoutedEventArgs e)
+        private void ExportAll_Click(object sender, RoutedEventArgs e)
         {
-            PasswordPanel.Visibility = Visibility.Visible;
-        }
+            var memos = _getMemos().OrderByDescending(m => m.UpdatedAt).ToList();
+            if (memos.Count == 0) return;
 
-        private void UsePasswordCheckBox_Unchecked(object sender, RoutedEventArgs e)
-        {
-            var result = MessageBox.Show(
-                "비밀번호 보호를 해제하시겠습니까?\n데이터는 기본 암호화로 유지됩니다.",
-                "확인",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
-
-            if (result == MessageBoxResult.Yes)
+            var dialog = new SaveFileDialog
             {
-                _storage.DeletePasswordHash();
-                PasswordPanel.Visibility = Visibility.Collapsed;
-                PasswordEnabled = false;
-                
-                // 기본 암호화 키 설정
-                _encryption.SetMasterKey("SecureMemoDefaultKey");
-            }
-            else
-            {
-                UsePasswordCheckBox.IsChecked = true;
-            }
-        }
-
-        private void TogglePasswordVisibility_Click(object sender, RoutedEventArgs e)
-        {
-            _passwordVisible = !_passwordVisible;
-            
-            if (_passwordVisible)
-            {
-                NewPasswordTextBox.Text = NewPasswordBox.Password;
-                NewPasswordBox.Visibility = Visibility.Collapsed;
-                NewPasswordTextBox.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                NewPasswordBox.Password = NewPasswordTextBox.Text;
-                NewPasswordTextBox.Visibility = Visibility.Collapsed;
-                NewPasswordBox.Visibility = Visibility.Visible;
-            }
-        }
-
-        private void SetPassword_Click(object sender, RoutedEventArgs e)
-        {
-            var password = _passwordVisible ? NewPasswordTextBox.Text : NewPasswordBox.Password;
-            
-            if (string.IsNullOrWhiteSpace(password))
-            {
-                MessageBox.Show("비밀번호를 입력하세요", "오류", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            if (password.Length < 4)
-            {
-                MessageBox.Show("비밀번호는 최소 4자 이상이어야 합니다", "오류", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            var hasExistingPassword = _storage.LoadPasswordHash() != null;
-            
-            if (hasExistingPassword)
-            {
-                var result = MessageBox.Show(
-                    "비밀번호를 변경하시겠습니까?\n기존 데이터는 새 비밀번호로 다시 암호화됩니다.",
-                    "확인",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Question);
-
-                if (result != MessageBoxResult.Yes)
-                    return;
-            }
-
-            _encryption.SetMasterKey(password);
-            _storage.SavePasswordHash(_encryption.HashPassword(password));
-            PasswordEnabled = true;
-
-            MessageBox.Show("비밀번호가 설정되었습니다", "완료", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-
-        private async void CheckOllamaStatus()
-        {
-            var installed = _ollamaSetup.IsOllamaInstalled();
-            var running = installed && await _ollamaSetup.IsOllamaRunningAsync();
-            var hasModel = running && await _ollamaSetup.IsModelInstalledAsync();
-
-            if (hasModel)
-            {
-                SetupStatusText.Text = "✅ Ollama 설치됨 · 서버 실행 중 · gemma4-e2b 모델 준비 완료";
-                SetupStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
-                AutoSetupButton.Content = "✅ AI 설정 완료";
-                AutoSetupButton.Background = new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0x2a, 0x2a, 0x2a));
-                TestApiButton.Visibility = Visibility.Visible;
-            }
-            else if (running)
-            {
-                SetupStatusText.Text = "⚠ Ollama 실행 중이지만 gemma4-e2b 모델이 없습니다";
-                SetupStatusText.Foreground = System.Windows.Media.Brushes.Orange;
-            }
-            else if (installed)
-            {
-                SetupStatusText.Text = "⚠ Ollama 설치됨, 서버가 실행되지 않고 있습니다";
-                SetupStatusText.Foreground = System.Windows.Media.Brushes.Orange;
-            }
-            else
-            {
-                SetupStatusText.Text = "Ollama가 설치되어 있지 않습니다. 위 버튼을 눌러 자동 설정하세요.";
-                SetupStatusText.Foreground = System.Windows.Media.Brushes.Gray;
-            }
-        }
-
-        private async void AutoSetup_Click(object sender, RoutedEventArgs e)
-        {
-            AutoSetupButton.IsEnabled = false;
-            AutoSetupButton.Content = "설정 진행 중...";
-            SetupProgressBar.Visibility = Visibility.Visible;
-            SetupProgressBar.Value = 0;
-
-            _ollamaSetup.StatusChanged += status =>
-            {
-                Dispatcher.Invoke(() => SetupStatusText.Text = status);
+                Filter = "Word 문서|*.docx",
+                FileName = $"SecureMemo_전체메모_{DateTime.Now:yyyyMMdd}.docx"
             };
+            if (dialog.ShowDialog(this) != true) return;
 
-            _ollamaSetup.ProgressChanged += percent =>
-            {
-                Dispatcher.Invoke(() => SetupProgressBar.Value = percent);
-            };
-
+            ExportStatusText.Visibility = Visibility.Visible;
             try
             {
-                var success = await _ollamaSetup.AutoSetupAsync();
-
-                if (success)
-                {
-                    SetupStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
-                    AutoSetupButton.Content = "✅ AI 설정 완료";
-                    TestApiButton.Visibility = Visibility.Visible;
-
-                    // 서버 URL 자동 저장 (기본 localhost)
-                    var serverUrl = "http://localhost:11434";
-                    _storage.SaveServerUrl(serverUrl);
-                    _gemini.SetServerUrl(serverUrl);
-                    ServerUrlChanged = true;
-                }
-                else
-                {
-                    SetupStatusText.Foreground = System.Windows.Media.Brushes.Red;
-                    AutoSetupButton.Content = "🚀 원클릭 AI 설정";
-                    AutoSetupButton.IsEnabled = true;
-                }
+                _export.ExportAllToDocx(memos, dialog.FileName);
+                ExportStatusText.Text = $"✓ 메모 {memos.Count}개를 내보냈습니다: {Path.GetFileName(dialog.FileName)}";
+                ExportStatusText.Foreground = System.Windows.Media.Brushes.LightGreen;
             }
             catch (Exception ex)
             {
-                SetupStatusText.Text = $"설정 실패: {ex.Message}";
-                SetupStatusText.Foreground = System.Windows.Media.Brushes.Red;
-                AutoSetupButton.Content = "🚀 원클릭 AI 설정";
-                AutoSetupButton.IsEnabled = true;
-            }
-            finally
-            {
-                SetupProgressBar.Visibility = Visibility.Collapsed;
-            }
-        }
-
-        private async void TestApi_Click(object sender, RoutedEventArgs e)
-        {
-            var serverUrl = _storage.LoadServerUrl() ?? "http://localhost:11434";
-
-            try
-            {
-                TestApiButton.IsEnabled = false;
-                TestApiButton.Content = "테스트 중...";
-                ApiTestResult.Visibility = Visibility.Visible;
-                ApiTestResult.Text = "연결 테스트 중...";
-                ApiTestResult.Foreground = System.Windows.Media.Brushes.Gray;
-
-                _gemini.SetServerUrl(serverUrl);
-                var (success, message) = await _gemini.TestConnectionAsync();
-
-                ApiTestResult.Text = message;
-                ApiTestResult.Foreground = success 
-                    ? System.Windows.Media.Brushes.LightGreen 
-                    : System.Windows.Media.Brushes.Red;
-            }
-            catch (Exception ex)
-            {
-                ApiTestResult.Text = $"❌ 오류: {ex.Message}";
-                ApiTestResult.Foreground = System.Windows.Media.Brushes.Red;
-            }
-            finally
-            {
-                TestApiButton.IsEnabled = true;
-                TestApiButton.Content = "연결 테스트";
+                ExportStatusText.Text = $"내보내기 실패: {ex.Message}";
+                ExportStatusText.Foreground = System.Windows.Media.Brushes.IndianRed;
             }
         }
 
